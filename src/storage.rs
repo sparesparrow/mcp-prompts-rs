@@ -10,7 +10,8 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 /// Trait defining the storage operations for prompts.
 #[async_trait]
-pub trait PromptStorage: Send + Sync + 'static { // Require Send + Sync + 'static
+pub trait PromptStorage: Send + Sync + 'static {
+    // Require Send + Sync + 'static
     async fn list_prompts(&self) -> Result<Vec<Prompt>>;
     async fn get_prompt(&self, id: &str) -> Result<Option<Prompt>>; // Return Option<Prompt>
     async fn save_prompt(&self, prompt: &Prompt) -> Result<()>;
@@ -39,7 +40,8 @@ impl FileSystemStorage {
 impl PromptStorage for FileSystemStorage {
     async fn list_prompts(&self) -> Result<Vec<Prompt>> {
         let mut prompts = Vec::new();
-        let mut dir = fs::read_dir(&self.base_path).await
+        let mut dir = fs::read_dir(&self.base_path)
+            .await
             .with_context(|| format!("Failed to read prompt directory: {:?}", self.base_path))?;
 
         while let Some(entry) = dir.next_entry().await? {
@@ -60,10 +62,12 @@ impl PromptStorage for FileSystemStorage {
         if !path.exists() {
             return Ok(None);
         }
-        let mut file = fs::File::open(&path).await
+        let mut file = fs::File::open(&path)
+            .await
             .with_context(|| format!("Failed to open prompt file: {:?}", path))?;
         let mut contents = String::new();
-        file.read_to_string(&mut contents).await
+        file.read_to_string(&mut contents)
+            .await
             .with_context(|| format!("Failed to read prompt file: {:?}", path))?;
         let prompt: Prompt = serde_json::from_str(&contents)
             .with_context(|| format!("Failed to deserialize prompt from file: {:?}", path))?;
@@ -72,13 +76,16 @@ impl PromptStorage for FileSystemStorage {
 
     async fn save_prompt(&self, prompt: &Prompt) -> Result<()> {
         let path = self.get_prompt_path(&prompt.id);
-        fs::create_dir_all(&self.base_path).await
+        fs::create_dir_all(&self.base_path)
+            .await
             .with_context(|| format!("Failed to create prompt directory: {:?}", self.base_path))?;
         let contents = serde_json::to_string_pretty(prompt)
             .with_context(|| format!("Failed to serialize prompt: {}", prompt.id))?;
-        let mut file = fs::File::create(&path).await
+        let mut file = fs::File::create(&path)
+            .await
             .with_context(|| format!("Failed to create prompt file: {:?}", path))?;
-        file.write_all(contents.as_bytes()).await
+        file.write_all(contents.as_bytes())
+            .await
             .with_context(|| format!("Failed to write to prompt file: {:?}", path))?;
         Ok(())
     }
@@ -86,9 +93,10 @@ impl PromptStorage for FileSystemStorage {
     async fn delete_prompt(&self, id: &str) -> Result<()> {
         let path = self.get_prompt_path(id);
         if path.exists() {
-            fs::remove_file(&path).await
+            fs::remove_file(&path)
+                .await
                 .with_context(|| format!("Failed to delete prompt file: {:?}", path))?;
         }
         Ok(())
     }
-} 
+}

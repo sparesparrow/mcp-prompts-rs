@@ -1,5 +1,5 @@
-use crate::Prompt;
 use super::PromptStorage;
+use crate::Prompt;
 use anyhow::{Context, Result};
 use async_trait::async_trait;
 use sqlx::postgres::{PgPool, PgPoolOptions, PgRow};
@@ -45,8 +45,15 @@ impl PostgresStorage {
             .max_connections(5) // Configure pool size
             .connect(database_url)
             .await
-            .with_context(|| format!("Failed to create PostgreSQL connection pool for URL: {}", database_url))?;
-        Ok(PostgresStorage { pool: Arc::new(pool) })
+            .with_context(|| {
+                format!(
+                    "Failed to create PostgreSQL connection pool for URL: {}",
+                    database_url
+                )
+            })?;
+        Ok(PostgresStorage {
+            pool: Arc::new(pool),
+        })
     }
 
     /// Initializes the database schema if it doesn't exist.
@@ -64,7 +71,7 @@ impl PostgresStorage {
                 created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
                 updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
             );
-            "#
+            "#,
         )
         .execute(&*self.pool)
         .await
@@ -94,7 +101,9 @@ impl PromptStorage for PostgresStorage {
 
     async fn save_prompt(&self, prompt: &Prompt) -> Result<()> {
         // Convert variables Vec<String> to JSON for storage
-        let variables_json = prompt.variables.as_ref()
+        let variables_json = prompt
+            .variables
+            .as_ref()
             .map(|v| serde_json::to_value(v))
             .transpose()
             .context("Failed to serialize prompt variables to JSON")?;
@@ -109,7 +118,7 @@ impl PromptStorage for PostgresStorage {
                 variables = EXCLUDED.variables,
                 description = EXCLUDED.description,
                 updated_at = NOW();
-            "#
+            "#,
         )
         .bind(&prompt.id)
         .bind(&prompt.content)
@@ -131,4 +140,4 @@ impl PromptStorage for PostgresStorage {
         // Consider checking rows affected if necessary
         Ok(())
     }
-} 
+}

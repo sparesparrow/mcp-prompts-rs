@@ -1,16 +1,19 @@
 pub mod storage;
 
-use serde::{Serialize, Deserialize};
-use storage::PromptStorage;
-use std::sync::Arc;
-use rmcp::model::resource::{Resource, ResourceList};
-use rmcp::model::prompt::{Prompt as McpPrompt, PromptList, PromptCapabilities, GetPromptParams};
-use rmcp::model::capabilities::{ServerCapabilities, TransportType};
-use rmcp::server::{ServerHandler, ServerRequest, ServerResponse, ServerError, CreateParams, DeleteParams, UpdateParams};
+use anyhow::{Context, Result};
 use async_trait::async_trait;
-use anyhow::{Result, Context};
-use tera::{Tera, Context as TeraContext};
+use rmcp::model::capabilities::{ServerCapabilities, TransportType};
+use rmcp::model::prompt::{GetPromptParams, Prompt as McpPrompt, PromptCapabilities, PromptList};
+use rmcp::model::resource::{Resource, ResourceList};
+use rmcp::server::{
+    CreateParams, DeleteParams, ServerError, ServerHandler, ServerRequest, ServerResponse,
+    UpdateParams,
+};
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::sync::Arc;
+use storage::PromptStorage;
+use tera::{Context as TeraContext, Tera};
 use tracing::{debug, error, info, instrument, warn};
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -64,7 +67,7 @@ impl ServerHandler for McpPromptServerHandler {
         Ok(ServerCapabilities {
             server_name: "mcp-prompts-rs".to_string(),
             prompt_capabilities: Some(PromptCapabilities {}),
-            transports: vec![TransportType::SseServer]
+            transports: vec![TransportType::SseServer],
         })
     }
 
@@ -74,7 +77,9 @@ impl ServerHandler for McpPromptServerHandler {
         let prompts = self.storage.list_prompts().await?;
         info!(count = prompts.len(), "Found prompts");
         let mcp_prompts: Vec<McpPrompt> = prompts.into_iter().map(to_mcp_prompt).collect();
-        Ok(PromptList { prompts: mcp_prompts })
+        Ok(PromptList {
+            prompts: mcp_prompts,
+        })
     }
 
     #[instrument(skip(self, req), name = "get_prompt", fields(prompt_id = %req.params.id))]
@@ -103,7 +108,7 @@ impl ServerHandler for McpPromptServerHandler {
                 }
                 info!("Prompt retrieved successfully");
                 Ok(mcp_prompt)
-            },
+            }
             None => {
                 warn!("Prompt not found");
                 Err(ServerError::resource_not_found(format!("Prompt '{}' not found", id)).into())
@@ -121,13 +126,20 @@ impl ServerHandler for McpPromptServerHandler {
     async fn get_resource(&self, req: ServerRequest<String>) -> Result<Resource> {
         warn!("get_resource not implemented");
         let id = req.params;
-        Err(ServerError::resource_not_found(format!("Resource '{}' not found (or not supported)", id)).into())
+        Err(ServerError::resource_not_found(format!(
+            "Resource '{}' not found (or not supported)",
+            id
+        ))
+        .into())
     }
 
     // --- Prompt Modification Methods ---
 
     #[instrument(skip(self, req), name = "create_prompt", fields(prompt_id = %req.params.item.id))]
-    async fn create_prompt(&self, req: ServerRequest<CreateParams<McpPrompt>>) -> Result<McpPrompt> {
+    async fn create_prompt(
+        &self,
+        req: ServerRequest<CreateParams<McpPrompt>>,
+    ) -> Result<McpPrompt> {
         let mcp_prompt = req.params.item;
         let prompt_id = mcp_prompt.id.clone();
         debug!(prompt = ?mcp_prompt, "Attempting to create prompt");
@@ -138,10 +150,16 @@ impl ServerHandler for McpPromptServerHandler {
         // Check if prompt already exists (optional, depends on desired create behavior)
         if self.storage.get_prompt(&prompt_id).await?.is_some() {
             warn!("Attempted to create existing prompt");
-            return Err(ServerError::invalid_request(format!("Prompt '{}' already exists. Use update_prompt instead.", prompt_id)).into());
+            return Err(ServerError::invalid_request(format!(
+                "Prompt '{}' already exists. Use update_prompt instead.",
+                prompt_id
+            ))
+            .into());
         }
 
-        self.storage.save_prompt(&internal_prompt).await
+        self.storage
+            .save_prompt(&internal_prompt)
+            .await
             .with_context(|| format!("Failed to create prompt '{}'", prompt_id))?;
 
         // Return the saved prompt (converted back to McpPrompt)
@@ -150,7 +168,10 @@ impl ServerHandler for McpPromptServerHandler {
     }
 
     #[instrument(skip(self, req), name = "update_prompt", fields(prompt_id = %req.params.item.id))]
-    async fn update_prompt(&self, req: ServerRequest<UpdateParams<McpPrompt>>) -> Result<McpPrompt> {
+    async fn update_prompt(
+        &self,
+        req: ServerRequest<UpdateParams<McpPrompt>>,
+    ) -> Result<McpPrompt> {
         let mcp_prompt = req.params.item;
         let prompt_id = mcp_prompt.id.clone();
         debug!(prompt = ?mcp_prompt, "Attempting to update prompt");
@@ -161,10 +182,16 @@ impl ServerHandler for McpPromptServerHandler {
         // Check if prompt exists before updating
         if self.storage.get_prompt(&prompt_id).await?.is_none() {
             warn!("Attempted to update non-existent prompt");
-            return Err(ServerError::resource_not_found(format!("Prompt '{}' not found. Cannot update.", prompt_id)).into());
+            return Err(ServerError::resource_not_found(format!(
+                "Prompt '{}' not found. Cannot update.",
+                prompt_id
+            ))
+            .into());
         }
 
-        self.storage.save_prompt(&internal_prompt).await
+        self.storage
+            .save_prompt(&internal_prompt)
+            .await
             .with_context(|| format!("Failed to update prompt '{}'", prompt_id))?;
 
         // Return the updated prompt
@@ -180,10 +207,16 @@ impl ServerHandler for McpPromptServerHandler {
         // Check if prompt exists before deleting
         if self.storage.get_prompt(&id).await?.is_none() {
             warn!("Attempted to delete non-existent prompt");
-            return Err(ServerError::resource_not_found(format!("Prompt '{}' not found. Cannot delete.", id)).into());
+            return Err(ServerError::resource_not_found(format!(
+                "Prompt '{}' not found. Cannot delete.",
+                id
+            ))
+            .into());
         }
 
-        self.storage.delete_prompt(&id).await
+        self.storage
+            .delete_prompt(&id)
+            .await
             .with_context(|| format!("Failed to delete prompt '{}'", id))?;
 
         info!("Prompt deleted successfully");
@@ -191,4 +224,4 @@ impl ServerHandler for McpPromptServerHandler {
     }
 
     // TODO: Implement other ServerHandler methods as needed (e.g., for tools)
-} 
+}
