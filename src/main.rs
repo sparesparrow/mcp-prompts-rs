@@ -1,9 +1,6 @@
 use clap::Parser;
 use mcp_prompts_rs::storage::postgres::PostgresStorage;
-use mcp_prompts_rs::storage::{FileSystemStorage, PromptStorage};
-use mcp_prompts_rs::McpPromptServerHandler;
-use rmcp::server::Server;
-use rmcp::transport::sse_server::SseServerTransport;
+use mcp_prompts_rs::storage::{filesystem::FileSystemStorage, PromptStorage};
 use std::sync::Arc;
 use tracing_subscriber::{fmt, EnvFilter};
 use actix_web::{web, App, HttpServer, Responder, HttpResponse, get, post, put, delete};
@@ -53,7 +50,7 @@ async fn get_prompt_handler(
     path: web::Path<String>,
 ) -> impl Responder {
     let id_str = path.into_inner();
-    tracing::info!(prompt_id = %id_str, "Handling GET /prompts/{id}");
+    tracing::info!(prompt_id = %id_str, "Handling GET /prompts/{}", id_str);
 
     match Uuid::parse_str(&id_str) {
         Ok(id_uuid) => match storage.get_prompt(&id_uuid).await {
@@ -106,7 +103,7 @@ async fn update_prompt_handler(
 ) -> impl Responder {
     let id_str = path.into_inner();
     let mut prompt_update = prompt_data.into_inner();
-    tracing::info!(prompt_id = %id_str, "Handling PUT /prompts/{id}");
+    tracing::info!(prompt_id = %id_str, "Handling PUT /prompts/{}", id_str);
 
     match Uuid::parse_str(&id_str) {
         Ok(id_uuid) => {
@@ -140,7 +137,7 @@ async fn delete_prompt_handler(
     path: web::Path<String>
 ) -> impl Responder {
     let id_str = path.into_inner();
-    tracing::info!(prompt_id = %id_str, "Handling DELETE /prompts/{id}");
+    tracing::info!(prompt_id = %id_str, "Handling DELETE /prompts/{}", id_str);
 
     match Uuid::parse_str(&id_str) {
         Ok(id_uuid) => match storage.delete_prompt(&id_uuid).await {
@@ -202,36 +199,26 @@ async fn main() -> std::io::Result<()> {
             panic!("Unsupported storage type: {}", args.storage);
         }
     };
-    let app_storage = web::Data::new(Arc::clone(&storage)); // Wrap storage for App data
+    let app_storage: web::Data<Arc<dyn PromptStorage>> = web::Data::new(Arc::clone(&storage)); // Keep storage for REST API
 
-    // Placeholder for MCP server initialization using rmcp library
-    // let mcp_config = McpServerConfig { /* configuration parameters */ };
-    // let mcp_server = McpServer::new(mcp_config).await.unwrap();
-
-    // --- Initialize MCP Server Handler ---
-    let mcp_handler = McpPromptServerHandler::new(Arc::clone(&storage)); // Clone Arc for MCP handler
-    let mcp_server = Arc::new(Server::new(mcp_handler)); // Wrap server in Arc for sharing
+    // --- Temporarily remove MCP Server Handler Initialization ---
+    // let mcp_handler = McpPromptServerHandler::new(Arc::clone(&storage));
+    // let mcp_server = Arc::new(Server::new(mcp_handler));
 
     // --- Configure and Start Actix Web Server ---
     let bind_addr = format!("127.0.0.1:{}", args.port);
-    tracing::info!(address = %bind_addr, "Starting HTTP server (REST API & MCP SSE)");
+    tracing::info!(address = %bind_addr, "Starting HTTP server (REST API only for now)");
 
     HttpServer::new(move || {
-        // Clone the Arc<Server> for each worker thread
-        let mcp_server_clone = Arc::clone(&mcp_server);
-        let app_storage_clone = app_storage.clone(); // Clone app_storage for the App factory
+        // let mcp_server_clone = Arc::clone(&mcp_server); // Removed
+        let app_storage_clone = app_storage.clone();
 
-        // TODO: Verify how rmcp integrates SSE transport. This is a guess.
-        // Assume SseServerTransport provides a way to create an Actix service/handler.
-        // Replace this with the actual rmcp integration method.
-        let sse_service = SseServerTransport::create_service(mcp_server_clone); // Hypothetical method
+        // --- Temporarily remove SSE Service Integration ---
+        // let sse_service = SseServerTransport::create_service(mcp_server_clone);
 
         App::new()
-            .app_data(app_storage_clone) // Add storage to application data
-            // TODO: Add middleware (e.g., Logger, CORS if needed)
+            .app_data(app_storage_clone)
             // .wrap(actix_web::middleware::Logger::default())
-
-            // Mount REST API routes under /prompts
             .service(
                 web::scope("/prompts")
                     .service(list_prompts_handler)
@@ -240,10 +227,9 @@ async fn main() -> std::io::Result<()> {
                     .service(update_prompt_handler)
                     .service(delete_prompt_handler),
             )
-            // Mount the MCP SSE service at /events
-            .service(web::scope("/events").service(sse_service)) // Mount the hypothetical service
-            // Add other routes or services as needed
-            .route("/health", web::get().to(|| async { HttpResponse::Ok().body("OK") })) // Basic health check
+            // --- Temporarily remove SSE route ---
+            // .service(web::scope("/events").service(sse_service))
+            .route("/health", web::get().to(|| async { HttpResponse::Ok().body("OK") }))
     })
     .bind(&bind_addr)?
     .run()

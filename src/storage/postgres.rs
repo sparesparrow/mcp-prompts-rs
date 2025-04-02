@@ -1,23 +1,21 @@
 use super::PromptStorage;
-use crate::Prompt;
+use crate::models::prompt::Prompt;
 use anyhow::{Context, Result};
 use async_trait::async_trait;
-use sqlx::postgres::{PgPool, PgPoolOptions, PgRow};
+use sqlx::postgres::{PgPool, PgPoolOptions};
 use sqlx::{FromRow, Row};
 use std::sync::Arc;
+use uuid::Uuid;
 
 // Define a struct that maps to the database table row
-// We derive FromRow to automatically map PgRow to this struct
-#[derive(FromRow, Debug)]
+#[derive(FromRow, Debug, Clone)]
 struct PromptRow {
-    id: String, // Assuming TEXT or VARCHAR in DB
+    id: Uuid,
+    name: String,
     content: String,
     category: Option<String>,
-    variables: Option<serde_json::Value>, // Assuming JSON or JSONB in DB
+    variables: Option<serde_json::Value>,
     description: Option<String>,
-    // Add timestamp fields if they exist in the DB
-    // created_at: chrono::DateTime<chrono::Utc>,
-    // updated_at: chrono::DateTime<chrono::Utc>,
 }
 
 // Helper to convert from DB row struct to our application Prompt struct
@@ -25,10 +23,10 @@ impl From<PromptRow> for Prompt {
     fn from(row: PromptRow) -> Self {
         Prompt {
             id: row.id,
+            name: row.name,
             content: row.content,
             category: row.category,
             variables: row.variables.and_then(|v| serde_json::from_value(v).ok()),
-            description: row.description,
         }
     }
 }
@@ -58,12 +56,11 @@ impl PostgresStorage {
 
     /// Initializes the database schema if it doesn't exist.
     pub async fn init_schema(&self) -> Result<()> {
-        // Use SQLx's query! macro for compile-time checked SQL (optional but recommended)
-        // Or use query() for runtime SQL strings.
         sqlx::query(
             r#"
             CREATE TABLE IF NOT EXISTS prompts (
-                id TEXT PRIMARY KEY,
+                id UUID PRIMARY KEY,
+                name TEXT NOT NULL,
                 content TEXT NOT NULL,
                 category TEXT,
                 variables JSONB,
@@ -90,7 +87,7 @@ impl PromptStorage for PostgresStorage {
         Ok(rows.into_iter().map(Prompt::from).collect())
     }
 
-    async fn get_prompt(&self, id: &str) -> Result<Option<Prompt>> {
+    async fn get_prompt(&self, id: &Uuid) -> Result<Option<Prompt>> {
         let row: Option<PromptRow> = sqlx::query_as("SELECT * FROM prompts WHERE id = $1")
             .bind(id)
             .fetch_optional(&*self.pool)
@@ -100,7 +97,6 @@ impl PromptStorage for PostgresStorage {
     }
 
     async fn save_prompt(&self, prompt: &Prompt) -> Result<()> {
-        // Convert variables Vec<String> to JSON for storage
         let variables_json = prompt
             .variables
             .as_ref()
@@ -108,11 +104,14 @@ impl PromptStorage for PostgresStorage {
             .transpose()
             .context("Failed to serialize prompt variables to JSON")?;
 
+        let description = prompt.category.clone();
+
         sqlx::query(
             r#"
-            INSERT INTO prompts (id, content, category, variables, description)
-            VALUES ($1, $2, $3, $4, $5)
+            INSERT INTO prompts (id, name, content, category, variables, description)
+            VALUES ($1, $2, $3, $4, $5, $6)
             ON CONFLICT (id) DO UPDATE SET
+                name = EXCLUDED.name,
                 content = EXCLUDED.content,
                 category = EXCLUDED.category,
                 variables = EXCLUDED.variables,
@@ -120,24 +119,24 @@ impl PromptStorage for PostgresStorage {
                 updated_at = NOW();
             "#,
         )
-        .bind(&prompt.id)
+        .bind(prompt.id)
+        .bind(&prompt.name)
         .bind(&prompt.content)
         .bind(&prompt.category)
         .bind(&variables_json)
-        .bind(&prompt.description)
+        .bind(&description)
         .execute(&*self.pool)
         .await
         .with_context(|| format!("Failed to save prompt with id '{}' to database", prompt.id))?;
         Ok(())
     }
 
-    async fn delete_prompt(&self, id: &str) -> Result<()> {
-        sqlx::query("DELETE FROM prompts WHERE id = $1")
+    async fn delete_prompt(&self, id: &Uuid) -> Result<bool> {
+        let result = sqlx::query("DELETE FROM prompts WHERE id = $1")
             .bind(id)
             .execute(&*self.pool)
             .await
             .with_context(|| format!("Failed to delete prompt with id '{}' from database", id))?;
-        // Consider checking rows affected if necessary
-        Ok(())
+        Ok(result.rows_affected() > 0)
     }
 }
