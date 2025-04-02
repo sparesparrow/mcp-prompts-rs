@@ -6,6 +6,9 @@ use rmcp::server::Server;
 use rmcp::transport::sse_server::SseServerTransport;
 use std::sync::Arc;
 use tracing_subscriber::{fmt, EnvFilter};
+use actix_web::{web, App, HttpServer, Responder, HttpResponse, get, post, put, delete};
+use mcp_prompts_rs::models::prompt::Prompt;
+use uuid::Uuid;
 
 // If available, import the rmcp crate for MCP server functionality
 // use rmcp::server::{McpServer, McpServerConfig};
@@ -30,16 +33,135 @@ struct Cli {
     prompt_dir: String,
 }
 
-async fn list_prompts() -> impl Responder {
-    HttpResponse::Ok().body("Listing prompts...")
+// --- REST Handlers Implementation ---
+
+#[get("")]
+async fn list_prompts_handler(storage: web::Data<Arc<dyn PromptStorage>>) -> impl Responder {
+    tracing::info!("Handling GET /prompts");
+    match storage.list_prompts().await {
+        Ok(prompts) => HttpResponse::Ok().json(prompts),
+        Err(e) => {
+            tracing::error!(error = %e, "Failed to list prompts");
+            HttpResponse::InternalServerError().body("Failed to list prompts")
+        }
+    }
 }
 
-async fn get_prompt(web::Path(id): web::Path<String>) -> impl Responder {
-    HttpResponse::Ok().body(format!("Getting prompt with id: {}", id))
+#[get("/{id}")]
+async fn get_prompt_handler(
+    storage: web::Data<Arc<dyn PromptStorage>>,
+    path: web::Path<String>,
+) -> impl Responder {
+    let id_str = path.into_inner();
+    tracing::info!(prompt_id = %id_str, "Handling GET /prompts/{id}");
+
+    match Uuid::parse_str(&id_str) {
+        Ok(id_uuid) => match storage.get_prompt(&id_uuid).await {
+            Ok(Some(prompt)) => HttpResponse::Ok().json(prompt),
+            Ok(None) => {
+                tracing::warn!(prompt_id = %id_str, "Prompt not found");
+                HttpResponse::NotFound().body(format!("Prompt with id {} not found", id_str))
+            }
+            Err(e) => {
+                tracing::error!(prompt_id = %id_str, error = %e, "Failed to get prompt");
+                HttpResponse::InternalServerError().body("Failed to retrieve prompt")
+            }
+        },
+        Err(_) => {
+            tracing::warn!(prompt_id = %id_str, "Invalid UUID format provided");
+            HttpResponse::BadRequest().body("Invalid prompt ID format. Please use UUID.")
+        }
+    }
 }
 
-async fn create_prompt(body: String) -> impl Responder {
-    HttpResponse::Ok().body(format!("Created prompt: {}", body))
+#[post("")]
+async fn create_prompt_handler(
+    storage: web::Data<Arc<dyn PromptStorage>>,
+    prompt_data: web::Json<Prompt> // Expect JSON body deserialized into Prompt
+) -> impl Responder {
+    let prompt = prompt_data.into_inner();
+    let prompt_id = prompt.id; // ID is generated in the struct
+    tracing::info!(prompt_id = %prompt_id, "Handling POST /prompts");
+
+    // Optional: Add validation for the prompt data here
+
+    match storage.save_prompt(&prompt).await {
+        Ok(_) => {
+            tracing::info!(prompt_id = %prompt_id, "Prompt created successfully");
+            // Return the created prompt (including the generated ID)
+            HttpResponse::Created().json(prompt)
+        }
+        Err(e) => {
+            tracing::error!(prompt_id = %prompt_id, error = %e, "Failed to create prompt");
+            HttpResponse::InternalServerError().body("Failed to create prompt")
+        }
+    }
+}
+
+#[put("/{id}")]
+async fn update_prompt_handler(
+    storage: web::Data<Arc<dyn PromptStorage>>,
+    path: web::Path<String>,
+    prompt_data: web::Json<Prompt> // Expect JSON body with updated prompt
+) -> impl Responder {
+    let id_str = path.into_inner();
+    let mut prompt_update = prompt_data.into_inner();
+    tracing::info!(prompt_id = %id_str, "Handling PUT /prompts/{id}");
+
+    match Uuid::parse_str(&id_str) {
+        Ok(id_uuid) => {
+            // Ensure the ID in the path matches the ID in the body, or set it
+            prompt_update.id = id_uuid;
+
+            // Optional: Add validation for the prompt data here
+
+            match storage.save_prompt(&prompt_update).await { // Assuming save_prompt handles create/update
+                Ok(_) => {
+                    tracing::info!(prompt_id = %id_uuid, "Prompt updated successfully");
+                    HttpResponse::Ok().json(prompt_update)
+                }
+                Err(e) => {
+                    tracing::error!(prompt_id = %id_uuid, error = %e, "Failed to update prompt");
+                    // Consider specific errors, e.g., NotFound vs InternalServerError
+                    HttpResponse::InternalServerError().body("Failed to update prompt")
+                }
+            }
+        }
+        Err(_) => {
+            tracing::warn!(prompt_id = %id_str, "Invalid UUID format provided for update");
+            HttpResponse::BadRequest().body("Invalid prompt ID format. Please use UUID.")
+        }
+    }
+}
+
+#[delete("/{id}")]
+async fn delete_prompt_handler(
+    storage: web::Data<Arc<dyn PromptStorage>>,
+    path: web::Path<String>
+) -> impl Responder {
+    let id_str = path.into_inner();
+    tracing::info!(prompt_id = %id_str, "Handling DELETE /prompts/{id}");
+
+    match Uuid::parse_str(&id_str) {
+        Ok(id_uuid) => match storage.delete_prompt(&id_uuid).await {
+            Ok(true) => { // Assuming delete_prompt returns true if deleted, false if not found
+                tracing::info!(prompt_id = %id_uuid, "Prompt deleted successfully");
+                HttpResponse::NoContent().finish() // 204 No Content is standard for successful DELETE
+            }
+            Ok(false) => {
+                tracing::warn!(prompt_id = %id_uuid, "Attempted to delete non-existent prompt");
+                HttpResponse::NotFound().body(format!("Prompt with id {} not found", id_str))
+            }
+            Err(e) => {
+                tracing::error!(prompt_id = %id_uuid, error = %e, "Failed to delete prompt");
+                HttpResponse::InternalServerError().body("Failed to delete prompt")
+            }
+        },
+        Err(_) => {
+            tracing::warn!(prompt_id = %id_str, "Invalid UUID format provided for delete");
+            HttpResponse::BadRequest().body("Invalid prompt ID format. Please use UUID.")
+        }
+    }
 }
 
 #[actix_web::main]
@@ -80,17 +202,50 @@ async fn main() -> std::io::Result<()> {
             panic!("Unsupported storage type: {}", args.storage);
         }
     };
+    let app_storage = web::Data::new(Arc::clone(&storage)); // Wrap storage for App data
 
     // Placeholder for MCP server initialization using rmcp library
     // let mcp_config = McpServerConfig { /* configuration parameters */ };
     // let mcp_server = McpServer::new(mcp_config).await.unwrap();
 
-    // --- Initialize MCP Server ---
-    let handler = McpPromptServerHandler::new(storage);
-    let server = Server::new(handler);
+    // --- Initialize MCP Server Handler ---
+    let mcp_handler = McpPromptServerHandler::new(Arc::clone(&storage)); // Clone Arc for MCP handler
+    let mcp_server = Arc::new(Server::new(mcp_handler)); // Wrap server in Arc for sharing
 
-    // --- Start SSE Transport ---
-    let addr = format!("127.0.0.1:{}", args.port);
-    tracing::info!(address = %addr, "Starting MCP SSE server");
-    SseServerTransport::bind(&addr).await?.serve(server).await
+    // --- Configure and Start Actix Web Server ---
+    let bind_addr = format!("127.0.0.1:{}", args.port);
+    tracing::info!(address = %bind_addr, "Starting HTTP server (REST API & MCP SSE)");
+
+    HttpServer::new(move || {
+        // Clone the Arc<Server> for each worker thread
+        let mcp_server_clone = Arc::clone(&mcp_server);
+        let app_storage_clone = app_storage.clone(); // Clone app_storage for the App factory
+
+        // TODO: Verify how rmcp integrates SSE transport. This is a guess.
+        // Assume SseServerTransport provides a way to create an Actix service/handler.
+        // Replace this with the actual rmcp integration method.
+        let sse_service = SseServerTransport::create_service(mcp_server_clone); // Hypothetical method
+
+        App::new()
+            .app_data(app_storage_clone) // Add storage to application data
+            // TODO: Add middleware (e.g., Logger, CORS if needed)
+            // .wrap(actix_web::middleware::Logger::default())
+
+            // Mount REST API routes under /prompts
+            .service(
+                web::scope("/prompts")
+                    .service(list_prompts_handler)
+                    .service(get_prompt_handler)
+                    .service(create_prompt_handler)
+                    .service(update_prompt_handler)
+                    .service(delete_prompt_handler),
+            )
+            // Mount the MCP SSE service at /events
+            .service(web::scope("/events").service(sse_service)) // Mount the hypothetical service
+            // Add other routes or services as needed
+            .route("/health", web::get().to(|| async { HttpResponse::Ok().body("OK") })) // Basic health check
+    })
+    .bind(&bind_addr)?
+    .run()
+    .await
 }
