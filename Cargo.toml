@@ -1,11 +1,14 @@
-# [package]
+[package]
 name = "mcp-prompts-rs"
 version = "0.1.0"
 edition = "2021"
-authors = ["Your Name <your.email@example.com>"]
+authors = ["sparesparrow <sparrow@example.com>"]
 description = "A Rust implementation of the MCP prompts server for managing AI prompts using the Model Context Protocol (MCP)."
 license = "Apache-2.0"
 readme = "README.md"
+repository = "https://github.com/sparesparrow/mcp-prompts-rs"
+keywords = ["mcp", "prompt", "ai", "rust", "llm"]
+categories = ["web-programming::http-server", "command-line-utilities"]
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
@@ -17,7 +20,7 @@ serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 tokio = { version = "1.0", features = ["full"] }
 tera = "1"
-rmcp = { git = "https://github.com/modelcontextprotocol/rust-sdk", branch = "main", features = ["server", "transport-sse-server"] }
+rmcp = { version = "0.1.0", features = ["server", "transport-sse-server"] }
 async-trait = "0.1"
 tokio-postgres = "0.7"
 sqlx = { version = "0.7", features = [ "runtime-tokio-rustls", "postgres", "uuid", "chrono", "json" ] }
