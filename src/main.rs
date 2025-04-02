@@ -1,8 +1,11 @@
 use mcp_prompts_rs::storage::{FileSystemStorage, PromptStorage};
-use mcp_prompts_rs::create_app;
-use actix_web::{web, App, HttpServer, HttpResponse, Responder};
+use mcp_prompts_rs::storage::postgres::PostgresStorage;
+use mcp_prompts_rs::McpPromptServerHandler;
 use clap::Parser;
 use std::sync::Arc;
+use rmcp::transport::sse_server::SseServerTransport;
+use rmcp::server::Server;
+use tracing_subscriber::{fmt, EnvFilter};
 
 // If available, import the rmcp crate for MCP server functionality
 // use rmcp::server::{McpServer, McpServerConfig};
@@ -41,22 +44,34 @@ async fn create_prompt(body: String) -> impl Responder {
 
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
+    // Initialize tracing subscriber
+    // Use `RUST_LOG=info` (or debug, trace, etc.) to control log level
+    // Example: RUST_LOG=mcp_prompts_rs=debug,rmcp=info cargo run
+    fmt()
+        .with_env_filter(EnvFilter::from_default_env())
+        .init();
+
     let args = Cli::parse();
-    println!("Starting MCP Prompts Server: {:#?}", args);
+    tracing::info!(args = ?args, "Starting MCP Prompts Server");
 
     // Initialize storage based on args
     let storage: Arc<dyn PromptStorage> = match args.storage.as_str() {
         "filesystem" => {
-            println!("Using filesystem storage at: {}", args.prompt_dir);
+            tracing::info!(path = %args.prompt_dir, "Using filesystem storage");
             Arc::new(FileSystemStorage::new(args.prompt_dir))
         }
         "postgres" => {
-            // Placeholder for PostgreSQL storage initialization
-            panic!("PostgreSQL storage not yet implemented!");
-            // let db_url = args.db_url.expect("db_url is required for postgres storage");
-            // Initialize and return Arc<PostgresStorage>
+            let db_url = args.db_url.clone().expect("--db-url is required for postgres storage");
+            tracing::info!(url = %db_url, "Using PostgreSQL storage");
+            let pg_storage = PostgresStorage::new(&db_url).await
+                .expect("Failed to connect to PostgreSQL");
+            // Initialize schema (consider making this optional via CLI arg)
+            pg_storage.init_schema().await.expect("Failed to initialize DB schema");
+            tracing::info!("Database schema initialized (if not exists)");
+            Arc::new(pg_storage)
         }
         _ => {
+            tracing::error!(storage_type = %args.storage, "Unsupported storage type specified");
             panic!("Unsupported storage type: {}", args.storage);
         }
     };
@@ -65,14 +80,15 @@ async fn main() -> std::io::Result<()> {
     // let mcp_config = McpServerConfig { /* configuration parameters */ };
     // let mcp_server = McpServer::new(mcp_config).await.unwrap();
 
-    println!("Listening on http://127.0.0.1:{}", args.port);
+    // --- Initialize MCP Server ---
+    let handler = McpPromptServerHandler::new(storage);
+    let server = Server::new(handler);
 
-    HttpServer::new(move || {
-        // Clone storage Arc for each worker thread
-        let storage_clone = storage.clone();
-        create_app(storage_clone) // Pass storage to the app factory
-    })
-    .bind(("127.0.0.1", args.port))?
-    .run()
-    .await
+    // --- Start SSE Transport ---
+    let addr = format!("127.0.0.1:{}", args.port);
+    tracing::info!(address = %addr, "Starting MCP SSE server");
+    SseServerTransport::bind(&addr)
+        .await?
+        .serve(server)
+        .await
 }

@@ -19,6 +19,11 @@ tokio = { version = "1.0", features = ["full"] }
 tera = "1"
 rmcp = { git = "https://github.com/modelcontextprotocol/rust-sdk", branch = "main", features = ["server", "transport-sse-server"] }
 async-trait = "0.1"
+tokio-postgres = "0.7"
+sqlx = { version = "0.7", features = [ "runtime-tokio-rustls", "postgres", "uuid", "chrono", "json" ] }
+uuid = { version = "1", features = ["v4", "serde"] } # Often useful for IDs
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 [dev-dependencies]
 tempfile = "3"

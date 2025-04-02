@@ -1,3 +1,5 @@
+pub mod postgres;
+
 use crate::Prompt;
 use anyhow::{Context, Result};
 use async_trait::async_trait;
