@@ -17,5 +17,33 @@ target/
 #.idea/
 
 # Added by cargo
-
 /target
+
+# Editor directories and files
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+
+# Environment variables
+.env
+
+# Coverage reports
+coverage/
+.nyc_output/
+test-results/
+
+# Temporary files
+temp*.json
+
+# NPM package files
+*.tgz
+
+# Temporary output directories
+output/
