@@ -91,9 +91,36 @@ To integrate with Claude Desktop:
 
 - `GET /prompts`: List all prompts
 - `GET /prompts/:id`: Get a specific prompt
-- `POST /prompts`: Create a new prompt
-- `PUT /prompts/:id`: Update an existing prompt
+- `POST /prompts`: Create a new prompt (requires at least `name` and `content` fields)
+- `PUT /prompts/:id`: Update an existing prompt (requires at least `name` and `content` fields)
 - `DELETE /prompts/:id`: Delete a prompt
+
+#### Example Usage (with curl)
+
+- **List all prompts:**
+  ```bash
+  curl -X GET http://localhost:3000/prompts
+  ```
+- **Create a prompt:**
+  ```bash
+  curl -X POST http://localhost:3000/prompts \
+    -H "Content-Type: application/json" \
+    -d '{"name": "test-prompt", "title": "Test Prompt", "content": "This is a test prompt."}'
+  ```
+- **Get a prompt by ID:**
+  ```bash
+  curl -X GET http://localhost:3000/prompts/<id>
+  ```
+- **Update a prompt:**
+  ```bash
+  curl -X PUT http://localhost:3000/prompts/<id> \
+    -H "Content-Type: application/json" \
+    -d '{"name": "test-prompt", "title": "Updated Test Prompt", "content": "This is an updated test prompt."}'
+  ```
+- **Delete a prompt:**
+  ```bash
+  curl -X DELETE http://localhost:3000/prompts/<id>
+  ```
 
 ### SSE
 
