@@ -31,7 +31,7 @@ The server provides functionality for storing, retrieving, and managing AI promp
 1. Clone the repository:
 
 ```bash
-git clone https://github.com/your-username/mcp-prompts-rs.git
+git clone https://github.com/sparesparrow/mcp-prompts-rs.git
 cd mcp-prompts-rs
 ```
 
